@@ -1,0 +1,95 @@
+#!/bin/bash
+# set -x
+
+IFS=$'\n'
+PAK="Press any key to continue"
+MATCH="tty.usbserial*"
+
+function colorize() {
+  COL='\033[0;3'$1'm'
+  RST='\033[0m'
+  printf "${COL}$2${RST}\n"
+}
+
+function error()   { colorize 1 "$1"; }
+function success() { colorize 2 "$1"; }
+function warn()    { colorize 3 "$1"; }
+function info()    { colorize 6 "$1"; }
+
+function pause(){
+  MSG=""
+  if [ -z $1 ]; then
+
+    PLUG=$(info "Plug the serial cable with G0 held for 5 seconds bootloader mode.")
+    MSG="$PLUG $PAK"
+  else
+    MSG=$1
+  fi
+
+  read -s -n 1 -p $MSG
+  echo ''
+}
+
+function check-success(){
+  if [ "$1" != "0" ]; then
+    error "Command failed. Exiting"
+    echo
+    exit 1
+  fi
+}
+
+ESPTOOL=$(which esptool.py)
+if [ -z $ESPTOOL ]; then
+  error "esptool.py was not found. Is it in your \$PATH?"
+  exit 1
+fi
+
+if [ -z $SERIAL ]; then
+  # attempt to auto-detect
+  info "\$SERIAL not set. Attempting to detect serial devices"
+  DEVS=$(find /dev -type c -name $MATCH 2> /dev/null | wc -l)
+  if [ "$DEVS" -gt "1" ]; then
+    warn "Found $DEVS devices. Export the correct device as \$SERIAL:"
+    find /dev -type c -name $MATCH 2>/dev/null
+    exit 1
+  fi
+  if [ "$DEVS" == "1" ]; then
+    SERIAL=$(find /dev -type c -name $MATCH 2> /dev/null)
+    FOUND=$(success "Found serial device $SERIAL.")
+    pause "$FOUND $PAK"
+  else
+    error "Export \$SERIAL with the path to your FTDI device."
+    exit 1
+  fi
+fi
+
+if [ -z $TASMOTA ]; then
+  if [ -e tasmota.bin ]; then
+    FOUND=$(success "Found tasmota.bin firmware. Using this as candidate firmware.")
+    pause "$FOUND $PAK"
+  else
+    error "Export \$TASMOTA with the path to your Tasmota firmware."
+    exit 1
+  fi
+fi
+
+pause
+info "Checking Device with $SERIAL"
+$ESPTOOL --port $SERIAL flash_id
+check-success $?
+succes "Device is present"
+echo
+
+pause "Step 1: Erase flash. $PAK"
+info "Erasing existing firmare using $SERIAL"
+$ESPTOOL --port $SERIAL erase_flash
+check-success $?
+sucess "Device erased"
+echo
+
+pause "Step 2: Flash Tasmota. Flashing $TASMOTA using $SERIAL. $PAK"
+info "Flashing $TASMOTA using $SERIAL"
+$ESPTOOL --port $SERIAL write_flash -fs 1MB -fm dout 0x0 $TASMOTA
+check-success $?
+success "Step 3: Replug serial cable WITHOUT holding G0. You should see a wireless AP starting with 'tasmota-'. Done."
+echo
